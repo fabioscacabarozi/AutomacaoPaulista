@@ -65,7 +65,11 @@ void setup()
 
 }
 
-// Funções auxiliares
+/**
+ * 
+ * Funções Auxiliares
+ * 
+ */
 void inibirUHF()
 {
   relecontrol.digitalWrite(PIN_RELE_UHF, 0);
@@ -192,7 +196,6 @@ String html = R"rawliteral(
   )rawliteral";
 
 void webPage(){
-
   WiFiClient client = server.available();   // listen for incoming clients
    if (client) {
     String request = "";
