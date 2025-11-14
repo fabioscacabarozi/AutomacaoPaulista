@@ -13,14 +13,20 @@ PortExpander_I2C relecontrol(0x27);
 PortExpander_I2C entradas(0x20);
 
 // GPIO ENTRADA
-#define PIN_FIM_CURSO_FECHADO 3 // Entrada 1 - Fim de curso Fechado
-#define PIN_FIM_CURSO_ABERTO 1  // Entrada 2 - Fim de curso Aberto
-#define PIN_FOTOCELULA 0        // Entrada 3 - Fotocelula
-#define PIN_LACO_MAGNETICO 2    // Entrada 4 - Laço
+#define PIN_FIM_CURSO_FECHADO 3 // Entrada 1 - Fim de curso Fechado Portao Saida
+#define PIN_FIM_CURSO_ABERTO 1  // Entrada 2 - Fim de curso Aberto Portao Saida
+#define PIN_FOTOCELULA 0        // Entrada 3 - Fotocelula Portao Saida
+#define PIN_LACO_MAGNETICO 2    // Entrada 4 - Laço Portao Saida
+
+#define PIN_FIM_CURSO_FECHADO_ENTRADA 4 // Entrada 5 - Fim de curso Fechado Portao Entrada
+#define PIN_FIM_CURSO_ABERTO_ENTRADA 5  // Entrada 6 - Fim de curso Aberto Portão Entrada
+#define PIN_FOTOCELULA_ENTRADA 6        // Entrada 7 - Fotocelula Portao Entrada
 
 // GPIO SAIDA
-#define PIN_RELE_SEMAFORO 0 // Rele 1
-#define PIN_RELE_UHF 1      // Rele 2
+#define PIN_RELE_SEMAFORO 0 // Rele 1 - Semaforo
+#define PIN_RELE_UHF 1      // Rele 2 - Trigger leitor TAG
+
+#define PIN_RELE_SEMAFORO_ENTRADA 5 // Rele 3 - Semaforo Portão Entrada
 
 // WIFI
 const char *wifi_ssid = "automacao_paulista";
@@ -29,7 +35,11 @@ const char *wifi_password = "1234567890";
 // Variáveis global
 bool ACIONOU_PHOTOCELULA = false;
 unsigned long phototimer_start = 0;
-const unsigned long PHOTOCELULA_TIMEOUT = 5000; // 3 segundos
+const unsigned long PHOTOCELULA_TIMEOUT = 5000; // 5 segundos
+
+bool ACIONOU_PHOTOCELULA_ENTRADA = false;
+unsigned long phototimer_start_entrada = 0;
+const unsigned long PHOTOCELULA_TIMEOUT_ENTRADA = 5000; // 5 segundos
 
 WiFiServer server(80);
 
@@ -52,9 +62,12 @@ void setup()
   relecontrol.pinMode(PIN_RELE_SEMAFORO, OUTPUT); // RELE1 - Semaforo Verde
   relecontrol.pinMode(PIN_RELE_UHF, OUTPUT);      // RELE2 - Inibicao UHF
 
-  // Defaul inibido leitura e sinal vermelho
+  // Default inibido leitura e sinal vermelho
   relecontrol.digitalWrite(PIN_RELE_UHF, 0);
   relecontrol.digitalWrite(PIN_RELE_SEMAFORO, 0);
+
+  // Default sinal vermelho portao entrada
+  relecontrol.digitalWrite(PIN_RELE_SEMAFORO_ENTRADA, 0);
 
   // Set WiFi to station mode and disconnect from an AP if it was previously connected
   WiFi.softAP(wifi_ssid, wifi_password);
@@ -90,6 +103,16 @@ void setSemaforoVermelho()
 void setSemaforoVerde()
 {
   relecontrol.digitalWrite(PIN_RELE_SEMAFORO, 1);
+}
+
+void setSemaforoVermelhoEntrada()
+{
+  relecontrol.digitalWrite(PIN_RELE_SEMAFORO_ENTRADA, 0);
+}
+
+void setSemaforoVerdeEntrada()
+{
+  relecontrol.digitalWrite(PIN_RELE_SEMAFORO_ENTRADA, 1);
 }
 
 
@@ -239,13 +262,27 @@ void webPage(){
 
 void loop()
 {
+  // Portao Saida
   bool fotocelula = (entradas.digitalRead(PIN_FOTOCELULA) == 0);
   bool laco = (entradas.digitalRead(PIN_LACO_MAGNETICO) == 0);
   bool fim_aberto = (entradas.digitalRead(PIN_FIM_CURSO_ABERTO) == 0);
   bool fim_fechado = (entradas.digitalRead(PIN_FIM_CURSO_FECHADO) == 0); 
 
+  // Portao Entrada
+  bool fim_fechado_entrada = (entradas.digitalRead(PIN_FIM_CURSO_FECHADO_ENTRADA) == 0);
+  bool fim_aberto_entrada = (entradas.digitalRead(PIN_FIM_CURSO_ABERTO_ENTRADA) == 0);
+  bool fotocelula_entrada = (entradas.digitalRead(PIN_FOTOCELULA_ENTRADA) == 0);
+
+  bool processo_saida = true;
+  bool processo_entrada = true;
+  
+
+  //---------------------------------------------------------------
+  // Condicoes portao de saida
+  //---------------------------------------------------------------
+
   // Protecao 1: caso tenha alguem no sensor, a saida será proibida
-  if (fotocelula)
+  if (processo_saida && fotocelula)
   {
     inibirUHF();
     // Colocar um delay caso o portao esteja aberto
@@ -258,69 +295,150 @@ void loop()
     ACIONOU_PHOTOCELULA = true;
     phototimer_start = millis(); // Inicia o contador
     webPage();
-    return;
+    processo_saida = false;
   }
 
     // Timeout para ACIONOU_PHOTOCELULA
-  if (ACIONOU_PHOTOCELULA && (millis() - phototimer_start >= PHOTOCELULA_TIMEOUT)) {
+  if (processo_saida && ACIONOU_PHOTOCELULA && (millis() - phototimer_start >= PHOTOCELULA_TIMEOUT)) {
     ACIONOU_PHOTOCELULA = false;
   }
 
   // Protecao 2: se acionada a photocelula, só liberar novamente com o portao 100% fechado
-  if (fim_fechado)
+  if (processo_saida && fim_fechado)
   {
     ACIONOU_PHOTOCELULA = false;
   }
 
   // Protecao 3: Portão em movimento
-  if (!fim_aberto && !fim_fechado)
+  if (processo_saida && !fim_aberto && !fim_fechado)
   {
     inibirUHF();
     setSemaforoVermelho();
     webPage();
-    return;
+    processo_saida = false;
   }
 
   // Cenário 1: Portão fechado, sem carro no laco, Portaria sem ninguem
-  if (fim_fechado && !laco)
+  if (processo_saida && fim_fechado && !laco)
   {
     inibirUHF();
     setSemaforoVermelho();
     webPage();
-    return;
+    processo_saida = false;
   }
 
   // Cenário 2: Carro chegou para sair e parou na frente da TAG
-  if (fim_fechado && laco)
+  if (processo_saida && fim_fechado && laco)
   {
     liberarUHF();
     setSemaforoVermelho();
     webPage();
-    return;
+    processo_saida = false;
   }
 
   // Cenário 3: Portão aberto, fotocelula desligada (carro parado na TAG esperando para sair)
-  if (fim_aberto && !ACIONOU_PHOTOCELULA)
+  if (processo_saida && fim_aberto && !ACIONOU_PHOTOCELULA)
   {
     inibirUHF();
     setSemaforoVerde();
     webPage();
-    return;
+    processo_saida = false;
   }
 
   // Cenário 4: Portão aberto, carro ja saiu
-  if (fim_aberto && ACIONOU_PHOTOCELULA)
+  if (processo_saida && fim_aberto && ACIONOU_PHOTOCELULA)
   {
     inibirUHF();
     setSemaforoVermelho();
     webPage();
-    return;
+    processo_saida = false;
   }
 
   // Default: segurança
-  inibirUHF();
-  setSemaforoVermelho();
-  webPage();
+  if(processo_saida){
+    inibirUHF();
+    setSemaforoVermelho();
+    webPage();
+  }
+
+   //---------------------------------------------------------------
+  // Condicoes portao de entrada
+  //---------------------------------------------------------------
+
+  // Protecao 1: caso tenha alguem no sensor, a saida será proibida
+  if (processo_entrada && fotocelula_entrada)
+  {
+    //inibirUHF(); // Se colocar laco habilitar
+    // Colocar um delay caso o portao esteja aberto
+    // Para evitar que quem abriu veja a luz vermelha ao passar
+    if (fim_aberto_entrada)
+    {
+      vTaskDelay(100 / portTICK_PERIOD_MS); // Delay de 100ms
+    }
+    setSemaforoVermelhoEntrada();
+    ACIONOU_PHOTOCELULA_ENTRADA = true;
+    phototimer_start_entrada = millis(); // Inicia o contador
+    processo_entrada = false;
+  }
+
+    // Timeout para ACIONOU_PHOTOCELULA
+  if (processo_entrada && ACIONOU_PHOTOCELULA_ENTRADA && (millis() - phototimer_start_entrada >= PHOTOCELULA_TIMEOUT_ENTRADA)) {
+    ACIONOU_PHOTOCELULA_ENTRADA = false;
+  }
+
+  // Protecao 2: se acionada a photocelula, só liberar novamente com o portao 100% fechado
+  if (processo_entrada && fim_fechado_entrada)
+  {
+    ACIONOU_PHOTOCELULA_ENTRADA = false;
+  }
+
+  // Protecao 3: Portão em movimento
+  if (processo_entrada && !fim_aberto_entrada && !fim_fechado_entrada)
+  {
+    //inibirUHF();
+    setSemaforoVermelhoEntrada();
+    processo_entrada = false;
+  }
+
+  // Descomentar se colocar laco
+  // Cenário 1: Portão fechado, sem carro no laco, Portaria sem ninguem
+  //if (processo_entrada && fim_fechado && !laco)
+  // {
+  //  inibirUHF();
+  //  setSemaforoVermelho();
+  //  webPage();
+  //  processo_entrada = false;
+  // }
+
+  // Cenário 2: Carro chegou para sair e parou na frente da TAG
+  if (processo_entrada && fim_fechado_entrada) // && laco - Descomentar caso coloque laco
+  {
+    //liberarUHF();
+    setSemaforoVermelhoEntrada();
+    processo_entrada = false;
+  }
+
+  // Cenário 3: Portão aberto, fotocelula desligada (carro parado na TAG esperando para sair)
+  if (processo_entrada && fim_aberto_entrada && !ACIONOU_PHOTOCELULA_ENTRADA)
+  {
+    //inibirUHF();
+    setSemaforoVerdeEntrada();
+    processo_entrada = false;
+  }
+
+  // Cenário 4: Portão aberto, carro ja saiu
+  if (processo_entrada && fim_aberto_entrada && ACIONOU_PHOTOCELULA_ENTRADA)
+  {
+    //inibirUHF();
+    setSemaforoVermelhoEntrada();
+    processo_entrada = false;
+  }
+
+  // Default: segurança
+  if(processo_entrada){
+    //inibirUHF();
+    setSemaforoVermelhoEntrada();
+  }
 
   vTaskDelay(300 / portTICK_PERIOD_MS); // Delay de 100ms
 }
