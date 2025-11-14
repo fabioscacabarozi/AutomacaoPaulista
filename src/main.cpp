@@ -28,6 +28,8 @@ const char *wifi_password = "1234567890";
 
 // Variáveis global
 bool ACIONOU_PHOTOCELULA = false;
+unsigned long phototimer_start = 0;
+const unsigned long PHOTOCELULA_TIMEOUT = 5000; // 3 segundos
 
 WiFiServer server(80);
 
@@ -254,8 +256,14 @@ void loop()
     }
     setSemaforoVermelho();
     ACIONOU_PHOTOCELULA = true;
+    phototimer_start = millis(); // Inicia o contador
     webPage();
     return;
+  }
+
+    // Timeout para ACIONOU_PHOTOCELULA
+  if (ACIONOU_PHOTOCELULA && (millis() - phototimer_start >= PHOTOCELULA_TIMEOUT)) {
+    ACIONOU_PHOTOCELULA = false;
   }
 
   // Protecao 2: se acionada a photocelula, só liberar novamente com o portao 100% fechado
