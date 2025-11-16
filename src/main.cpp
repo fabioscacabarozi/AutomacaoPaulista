@@ -8,6 +8,10 @@
 #include <WiFiClient.h>
 #include <WiFiAP.h>
 
+#include "html_principal.h"
+#include "html_saida.h"
+#include "html_entrada.h"
+
 // Objetos para comunicação com as portas
 PortExpander_I2C relecontrol(0x27);
 PortExpander_I2C entradas(0x20);
@@ -27,6 +31,7 @@ PortExpander_I2C entradas(0x20);
 #define PIN_RELE_UHF 1      // Rele 2 - Trigger leitor TAG
 
 #define PIN_RELE_SEMAFORO_ENTRADA 5 // Rele 3 - Semaforo Portão Entrada
+#define PIN_RELE_UHF_ENTRADA 4 // Rele 4 - Trigger leitor TAG Entrada
 
 // WIFI
 const char *wifi_ssid = "automacao_paulista";
@@ -42,43 +47,6 @@ unsigned long phototimer_start_entrada = 0;
 const unsigned long PHOTOCELULA_TIMEOUT_ENTRADA = 5000; // 5 segundos
 
 WiFiServer server(80);
-
-void setup()
-{
-
-  Serial.begin(115200);
-  Serial.println("Iniciando o controlador");
-
-  entradas.init();
-  relecontrol.init();
-
-  // Define as portas de entrada
-  entradas.pinMode(PIN_FIM_CURSO_FECHADO, INPUT); // Fim de Curso Fechado
-  entradas.pinMode(PIN_FIM_CURSO_ABERTO, INPUT);  // Fim de Curso Aberto
-  entradas.pinMode(PIN_FOTOCELULA, INPUT);        // Fotocelula
-  entradas.pinMode(PIN_LACO_MAGNETICO, INPUT);    // Laco Magnetico
-
-  // Define as portas de saida
-  relecontrol.pinMode(PIN_RELE_SEMAFORO, OUTPUT); // RELE1 - Semaforo Verde
-  relecontrol.pinMode(PIN_RELE_UHF, OUTPUT);      // RELE2 - Inibicao UHF
-
-  // Default inibido leitura e sinal vermelho
-  relecontrol.digitalWrite(PIN_RELE_UHF, 0);
-  relecontrol.digitalWrite(PIN_RELE_SEMAFORO, 0);
-
-  // Default sinal vermelho portao entrada
-  relecontrol.digitalWrite(PIN_RELE_SEMAFORO_ENTRADA, 0);
-
-  // Set WiFi to station mode and disconnect from an AP if it was previously connected
-  WiFi.softAP(wifi_ssid, wifi_password);
-  IPAddress myIP = WiFi.softAPIP(); // 192.168.4.1
-  Serial.print("AP IP address: ");
-  Serial.println(myIP);
-  server.begin();
-
-  Serial.println("Setup done");
-
-}
 
 /**
  * 
@@ -115,6 +83,16 @@ void setSemaforoVerdeEntrada()
   relecontrol.digitalWrite(PIN_RELE_SEMAFORO_ENTRADA, 1);
 }
 
+void inibirUHFEntrada()
+{
+  relecontrol.digitalWrite(PIN_RELE_UHF_ENTRADA, 0);
+}
+
+void liberarUHFEntrada()
+{
+  relecontrol.digitalWrite(PIN_RELE_UHF_ENTRADA, 1);
+}
+
 
 /**
  * 
@@ -126,7 +104,13 @@ struct Status {
   bool rele_uhf, rele_semaforo;
 };
 
+struct StatusEntrada {
+  bool fotocelula, fim_aberto, fim_fechado;
+  bool rele_uhf, rele_semaforo;
+};
+
 Status lastStatus = {0,0,0,0,0,0};
+StatusEntrada lastStatusEntrada = {0,0,0,0,0};
 
 Status readStatus() {
   Status s;
@@ -139,8 +123,23 @@ Status readStatus() {
   return s;
 }
 
+StatusEntrada readStatusEntrada() {
+  StatusEntrada s;
+  s.fotocelula = (entradas.digitalRead(PIN_FOTOCELULA_ENTRADA) == 0);
+  //s.laco = (entradas.digitalRead(PIN_LACO_MAGNETICO) == 0);
+  s.fim_aberto = (entradas.digitalRead(PIN_FIM_CURSO_ABERTO_ENTRADA) == 0);
+  s.fim_fechado = (entradas.digitalRead(PIN_FIM_CURSO_FECHADO_ENTRADA) == 0);
+  s.rele_uhf = (relecontrol.digitalRead(PIN_RELE_UHF_ENTRADA) == 1);
+  s.rele_semaforo = (relecontrol.digitalRead(PIN_RELE_SEMAFORO_ENTRADA) == 1);
+  return s;
+}
+
 bool statusChanged(Status &a, Status &b) {
   return memcmp(&a, &b, sizeof(Status)) != 0;
+}
+
+bool statusChangedEntrada(StatusEntrada &a, StatusEntrada &b) {
+  return memcmp(&a, &b, sizeof(StatusEntrada)) != 0;
 }
 
 String statusToJson(Status &s) {
@@ -156,73 +155,22 @@ String statusToJson(Status &s) {
   return json;
 }
 
-String html = R"rawliteral(
-  <!DOCTYPE html>
-  <html>
-  <head>
-  <meta charset='utf-8'>
-  <title>Automação Paulista</title>
-  <style>
-  body { font-family: Arial; background: #f4f4f4; margin:0; padding:0;}
-  h1 { background: #003366; color: #fff; margin:0; padding:20px;}
-  table { border-collapse: collapse; width:90%; margin:30px auto; background:#fff;}
-  th, td { border:1px solid #ccc; padding:10px; text-align:center;}
-  th { background:#003366; color:#fff;}
-  tr:nth-child(even){background:#f2f2f2;}
-  .status-on { color:green; font-weight:bold;}
-  .status-off { color:red; font-weight:bold;}
-  </style>
-  <script>
-  let lastData = {};
-  function atualizar() {
-      fetch('/status').then(r=>{
-          if(r.status==200) return r.json();
-          else throw 'nochange';
-      }).then(data=>{
-          if(JSON.stringify(data)!==JSON.stringify(lastData)){
-              lastData=data;
-              let now=new Date();
-              let row='<tr>';
-              row+='<td>'+now.toLocaleString()+'</td>';
-              row+='<td class="'+(data.fotocelula?'status-on':'status-off')+'">'+(data.fotocelula?'ATIVADO':'DESATIVADO')+'</td>';
-              row+='<td class="'+(data.laco?'status-on':'status-off')+'">'+(data.laco?'ATIVADO':'DESATIVADO')+'</td>';
-              row+='<td class="'+(data.fim_aberto?'status-on':'status-off')+'">'+(data.fim_aberto?'ATIVADO':'DESATIVADO')+'</td>';
-              row+='<td class="'+(data.fim_fechado?'status-on':'status-off')+'">'+(data.fim_fechado?'ATIVADO':'DESATIVADO')+'</td>';
-              row+='<td class="'+(data.rele_uhf?'status-on':'status-off')+'">'+(data.rele_uhf?'LENDO':'NÃO LENDO')+'</td>';
-              row+='<td class="'+(data.rele_semaforo?'status-on':'status-off')+'">'+(data.rele_semaforo?'VERDE':'VERMELHO')+'</td>';
-              row+='</tr>';
-              document.getElementById('tbody').innerHTML=row+document.getElementById('tbody').innerHTML;
-          }
-      }).catch(()=>{});
-  }
-  setInterval(atualizar,1000);
-  window.onload=atualizar;
-  </script>
-  </head>
-  <body>
-  <h1>Automação Paulista</h1>
-  <table>
-  <thead>
-  <tr>
-  <th>Data e Hora</th>
-  <th>Sensor Fotocelula</th>
-  <th>Laço Magnético</th>
-  <th>Fim Curso Aberto</th>
-  <th>Fim Curso Fechado</th>
-  <th>Leitora UFH</th>
-  <th>Semáforo</th>
-  </tr>
-  </thead>
-  <tbody id="tbody">
-  </tbody>
-  </table>
-  </body>
-  </html>
-  )rawliteral";
+String statusEntradaToJson(StatusEntrada &s) {
+  String json = "{";
+  json += "\"fotocelula\":" + String(s.fotocelula) + ",";
+  //json += "\"laco\":" + String(s.laco) + ",";
+  json += "\"fim_aberto\":" + String(s.fim_aberto) + ",";
+  json += "\"fim_fechado\":" + String(s.fim_fechado) + ",";
+  json += "\"rele_uhf\":" + String(s.rele_uhf) + ",";
+  json += "\"rele_semaforo\":" + String(s.rele_semaforo) + ",";
+  json += "\"datetime\":\"" + String(__DATE__) + " " + String(__TIME__) + "\"";
+  json += "}";
+  return json;
+}
 
 void webPage(){
   WiFiClient client = server.available();   // listen for incoming clients
-   if (client) {
+  if (client) {
     String request = "";
     while (client.connected()) {
       if (client.available()) {
@@ -231,32 +179,100 @@ void webPage(){
         if (c == '\n' && request.endsWith("\r\n\r\n")) break;
       }
     }
-    if (request.indexOf("GET /status") >= 0) {
-      Status current = readStatus();
-      static unsigned long lastSend = 0;
-      static Status lastSentStatus = {0,0,0,0,0,0};
-      bool changed = statusChanged(current, lastSentStatus);
-
-      if (changed || millis() - lastSend > 10000) { // força envio a cada X segundos
-        lastSentStatus = current;
-        lastSend = millis();
-        String json = statusToJson(current);
+    if (request.indexOf("GET / ") >= 0 || request.indexOf("GET /HTTP") >= 0) {
         client.println("HTTP/1.1 200 OK");
-        client.println("Content-Type: application/json");
+        client.println("Content-type:text/html");
         client.println();
-        client.print(json);
-      } else {
-        client.println("HTTP/1.1 204 No Content");
+        client.print(html_home); // string da página inicial
+    } else if (request.indexOf("GET /saida") >= 0) {
+        client.println("HTTP/1.1 200 OK");
+        client.println("Content-type:text/html");
         client.println();
-      }
-    } else {
-      client.println("HTTP/1.1 200 OK");
-      client.println("Content-type:text/html");
-      client.println();
-      client.print(html);
+        client.print(html_saida); // string da página do portão de saída
+    } else if (request.indexOf("GET /entrada") >= 0) {
+        client.println("HTTP/1.1 200 OK");
+        client.println("Content-type:text/html");
+        client.println();
+        client.print(html_entrada); // string da página do portão de entrada
+    } else if (request.indexOf("GET /status_saida") >= 0) {
+        // Retorne JSON apenas com os sensores/reles do portão de saída
+        Status current = readStatus();
+        static unsigned long lastSend = 0;
+        static Status lastSentStatus = {0,0,0,0,0,0};
+        bool changed = statusChanged(current, lastSentStatus);
+
+        if (changed || millis() - lastSend > 10000) { // força envio a cada X segundos
+          lastSentStatus = current;
+          lastSend = millis();
+          String json = statusToJson(current);
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-Type: application/json");
+          client.println();
+          client.print(json);
+        } else {
+          client.println("HTTP/1.1 204 No Content");
+          client.println();
+        }
+    } else if (request.indexOf("GET /status_entrada") >= 0) {
+        // Retorne JSON apenas com os sensores/reles do portão de entrada
+        StatusEntrada current = readStatusEntrada();
+        static unsigned long lastSend = 0;
+        static StatusEntrada lastSentStatus = {0,0,0,0,0};
+        bool changed = statusChangedEntrada(current, lastSentStatus);
+
+        if (changed || millis() - lastSend > 10000) { // força envio a cada X segundos
+          lastSentStatus = current;
+          lastSend = millis();
+          String json = statusEntradaToJson(current);
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-Type: application/json");
+          client.println();
+          client.print(json);
+        } else {
+          client.println("HTTP/1.1 200 OK");
+          client.println("Content-type:text/html");
+          client.println();
+          client.print(html_home);
+        }
     }
     client.stop();
-  } 
+  }
+}
+
+void setup()
+{
+  Serial.begin(115200);
+  Serial.println("Iniciando o controlador");
+
+  entradas.init();
+  relecontrol.init();
+
+  // Define as portas de entrada
+  entradas.pinMode(PIN_FIM_CURSO_FECHADO, INPUT); // Fim de Curso Fechado
+  entradas.pinMode(PIN_FIM_CURSO_ABERTO, INPUT);  // Fim de Curso Aberto
+  entradas.pinMode(PIN_FOTOCELULA, INPUT);        // Fotocelula
+  entradas.pinMode(PIN_LACO_MAGNETICO, INPUT);    // Laco Magnetico
+
+  // Define as portas de saida
+  relecontrol.pinMode(PIN_RELE_SEMAFORO, OUTPUT); // RELE1 - Semaforo Verde
+  relecontrol.pinMode(PIN_RELE_UHF, OUTPUT);      // RELE2 - Inibicao UHF
+
+  // Default inibido leitura e sinal vermelho
+  inibirUHF();
+  setSemaforoVermelho();
+
+  // Default sinal vermelho portao entrada
+  liberarUHFEntrada(); // Como nao temos sensor de laco, fica lendo direto
+  setSemaforoVermelhoEntrada();
+
+  // Set WiFi to station mode and disconnect from an AP if it was previously connected
+  WiFi.softAP(wifi_ssid, wifi_password);
+  IPAddress myIP = WiFi.softAPIP(); // 192.168.4.1
+  Serial.print("AP IP address: ");
+  Serial.println(myIP);
+  server.begin();
+
+  Serial.println("Setup done");
 
 }
 
@@ -294,7 +310,6 @@ void loop()
     setSemaforoVermelho();
     ACIONOU_PHOTOCELULA = true;
     phototimer_start = millis(); // Inicia o contador
-    webPage();
     processo_saida = false;
   }
 
@@ -314,7 +329,6 @@ void loop()
   {
     inibirUHF();
     setSemaforoVermelho();
-    webPage();
     processo_saida = false;
   }
 
@@ -323,7 +337,6 @@ void loop()
   {
     inibirUHF();
     setSemaforoVermelho();
-    webPage();
     processo_saida = false;
   }
 
@@ -332,7 +345,6 @@ void loop()
   {
     liberarUHF();
     setSemaforoVermelho();
-    webPage();
     processo_saida = false;
   }
 
@@ -341,7 +353,6 @@ void loop()
   {
     inibirUHF();
     setSemaforoVerde();
-    webPage();
     processo_saida = false;
   }
 
@@ -350,7 +361,6 @@ void loop()
   {
     inibirUHF();
     setSemaforoVermelho();
-    webPage();
     processo_saida = false;
   }
 
@@ -358,7 +368,6 @@ void loop()
   if(processo_saida){
     inibirUHF();
     setSemaforoVermelho();
-    webPage();
   }
 
    //---------------------------------------------------------------
@@ -395,7 +404,7 @@ void loop()
   // Protecao 3: Portão em movimento
   if (processo_entrada && !fim_aberto_entrada && !fim_fechado_entrada)
   {
-    //inibirUHF();
+    inibirUHFEntrada();
     setSemaforoVermelhoEntrada();
     processo_entrada = false;
   }
@@ -413,7 +422,7 @@ void loop()
   // Cenário 2: Carro chegou para sair e parou na frente da TAG
   if (processo_entrada && fim_fechado_entrada) // && laco - Descomentar caso coloque laco
   {
-    //liberarUHF();
+    liberarUHFEntrada();
     setSemaforoVermelhoEntrada();
     processo_entrada = false;
   }
@@ -421,7 +430,7 @@ void loop()
   // Cenário 3: Portão aberto, fotocelula desligada (carro parado na TAG esperando para sair)
   if (processo_entrada && fim_aberto_entrada && !ACIONOU_PHOTOCELULA_ENTRADA)
   {
-    //inibirUHF();
+    inibirUHFEntrada();
     setSemaforoVerdeEntrada();
     processo_entrada = false;
   }
@@ -429,17 +438,17 @@ void loop()
   // Cenário 4: Portão aberto, carro ja saiu
   if (processo_entrada && fim_aberto_entrada && ACIONOU_PHOTOCELULA_ENTRADA)
   {
-    //inibirUHF();
+    inibirUHFEntrada();
     setSemaforoVermelhoEntrada();
     processo_entrada = false;
   }
 
   // Default: segurança
   if(processo_entrada){
-    //inibirUHF();
+    inibirUHFEntrada();
     setSemaforoVermelhoEntrada();
   }
-
+  webPage();
   vTaskDelay(300 / portTICK_PERIOD_MS); // Delay de 100ms
 }
 
