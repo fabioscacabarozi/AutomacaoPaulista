@@ -55,12 +55,12 @@ WiFiServer server(80);
  */
 void inibirUHF()
 {
-  relecontrol.digitalWrite(PIN_RELE_UHF, 0);
+  relecontrol.digitalWrite(PIN_RELE_UHF, 1);
 }
 
 void liberarUHF()
 {
-  relecontrol.digitalWrite(PIN_RELE_UHF, 1);
+  relecontrol.digitalWrite(PIN_RELE_UHF, 0);
 }
 
 void setSemaforoVermelho()
@@ -85,12 +85,12 @@ void setSemaforoVerdeEntrada()
 
 void inibirUHFEntrada()
 {
-  relecontrol.digitalWrite(PIN_RELE_UHF_ENTRADA, 0);
+  relecontrol.digitalWrite(PIN_RELE_UHF_ENTRADA, 1);
 }
 
 void liberarUHFEntrada()
 {
-  relecontrol.digitalWrite(PIN_RELE_UHF_ENTRADA, 1);
+  relecontrol.digitalWrite(PIN_RELE_UHF_ENTRADA, 0);
 }
 
 
@@ -118,7 +118,7 @@ Status readStatus() {
   s.laco = (entradas.digitalRead(PIN_LACO_MAGNETICO) == 0);
   s.fim_aberto = (entradas.digitalRead(PIN_FIM_CURSO_ABERTO) == 0);
   s.fim_fechado = (entradas.digitalRead(PIN_FIM_CURSO_FECHADO) == 0);
-  s.rele_uhf = (relecontrol.digitalRead(PIN_RELE_UHF) == 1);
+  s.rele_uhf = (relecontrol.digitalRead(PIN_RELE_UHF) == 0); // era 1 mas alterado para ajustar rele sempre aberto
   s.rele_semaforo = (relecontrol.digitalRead(PIN_RELE_SEMAFORO) == 1);
   return s;
 }
@@ -129,7 +129,7 @@ StatusEntrada readStatusEntrada() {
   //s.laco = (entradas.digitalRead(PIN_LACO_MAGNETICO) == 0);
   s.fim_aberto = (entradas.digitalRead(PIN_FIM_CURSO_ABERTO_ENTRADA) == 0);
   s.fim_fechado = (entradas.digitalRead(PIN_FIM_CURSO_FECHADO_ENTRADA) == 0);
-  s.rele_uhf = (relecontrol.digitalRead(PIN_RELE_UHF_ENTRADA) == 1);
+  s.rele_uhf = (relecontrol.digitalRead(PIN_RELE_UHF_ENTRADA) == 0); // era 1 ajustado para o rele sempre aberto
   s.rele_semaforo = (relecontrol.digitalRead(PIN_RELE_SEMAFORO_ENTRADA) == 1);
   return s;
 }
